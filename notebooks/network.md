@@ -16,19 +16,21 @@ ARP works between Layers 2 and 3 of the Open Systems Interconnection model (OSI 
 
 网络接口层Network Access Layer: PPP, IEEE 802.2, 以帧为单位
 
-## DNS解析过程，DNS基于哪种传输层协议
+## DNS解析过程，DNS基于哪种传输层协议，DNS何时使用TCP
 
 DNS解析过程: 浏览器DNS缓存=>操作系统缓存=>本地域名服务器=>迭代查询(仅给出下一个查询的IP地址)/递归查询(服务器以DNS客户端的形式继续向其他根域名服务器发送请求)
 
-DNS基于UDP实现(减少开销)
+DNS基于UDP实现(客户端向DNS服务器查询域名，一般返回的内容都不超过512字节，减少开销)
 
-## UDP、TCP的区别、应用场景
+区域传输的时候使用TCP，通过一个可靠的TCP连接保证了数据的准确性，当一个辅助DNS服务器启动时，它需要与主DNS服务器通信，并加载数据信息，这就叫做区传送（zone transfer）。
+
+## UDP、TCP的区别、应用场景, UDP首部
 
 可靠指：无差错，不丢失，不重复，并且按序到达
 
 面向连接：使用TCP协议之前必须先建立TCP连接
 
-![img](../images/network/1806285859-5e51e6597ff7a_articlex.png)
+<img src="../images/network/1806285859-5e51e6597ff7a_articlex.png" alt="img" style="zoom:50%;" />
 
 ## TCP三次握手、四次挥手的详细过程
 
@@ -175,5 +177,100 @@ OPTION(请求一些选项信息), **GET**(读取由URL标识的信息), HEAD(读
 
 ![在这里插入图片描述](../images/network/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ0NjQ3MjIz,size_16,color_FFFFFF,t_70.png)
 
+凭借X, D_seck(X)，可以证明A的确发送了密文
 
+### 安全套接字层SSL(Secure Socket Layer)和运输层安全TLS(Transport Layer Security)
 
+SSL作用在系统应用层的**HTTP和运输层**之间，在TCP之上建立起一个安全通道，为通过TCP传输的应用层数据提供安全保障。
+
+TLS为在SSL基础上设计的协议。
+
+SSL增强了TCP的服务，因此，SSL应该是运输层协议。然而实际上，需要使用安全运输的应用程序却把SSL驻留在应用层。
+
+### 安全连接建立过程
+
+1. client向server发送请求，包括**自己支持的算法**，aes等
+2. server确认后续对称加密中使用的算法
+3. server向浏览器发送其用私钥加密的数字证书
+4. client通过从CA处获取的RSA公钥对该证书进行验证
+5. client随机产生一个nonce，然后用server的公钥加密
+6. server用私钥解密nonce，然后用nonce和之前约定好的对称加密算法产生会话密钥，并发送给client
+7. 数据传输(用会话密钥加密)
+
+### 在浏览器输入 URL 回车之后发生了什么
+
+1. **URL解析**
+
+   首先判断你输入的是一个合法的 URL 还是一个待搜索的关键词，并且根据你输入的内容进行自动完成、字符编码等操作。
+
+2. **DNS查询**
+
+   浏览器缓存=>操作系统缓存=>路由器缓存=>ISP DNS缓存=>根域名服务器查询
+
+3. **TCP连接**(TODO)
+
+   数据在两台主机间传输信息顺序：
+
+   1. 主机A 从应用层到传输层 到网络层 到数据链路层进行层层封包，最终形成一个数据帧，在物理层用二进制流传输
+   2. 到路由器，从物理层到数据链路层 到网络层，再从网络层到数据链路层 到物理层，路由器间传输
+   3. 到达目的主机，从物理层，数据链路层 网络层 传输层，应用层层层解包
+
+   MAC地址用于确定网络设备地址
+
+   TCP/IP协议建立连接 TCP通过三次握手建立连接，IP协议通过路由器的路由表，进行下一跳查询。IP协议的下一跳和ARP协议的MAC地址查询是在同一个时候应用的，并不是说我先找到目的主机的MAC地址，而是根据下一跳的IP，查找下一跳的MAC地址
+
+   建立TCP连接后，需要进行数据装包，数据转发
+
+4. **处理请求**
+
+   对HTTP请求进行解析和验证
+
+5. **接受响应**
+
+   浏览器接收到来自服务器的响应资源后，会对资源进行分析。
+
+   首先查看 Response header，根据不同状态码做不同的事（比如上面提到的重定向）。
+
+6. **渲染页面**
+
+## IP地址的分类 A/B/C/D类指的是什么？什么是子网掩码
+
+IP被划分为网络号和主机号
+
+<img src="../images/network/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3RyZXZvcl9r,size_16,color_FFFFFF,t_70.png" alt="在这里插入图片描述" style="zoom:67%;" />
+
+某个单位申请到IP号实际上是申请到了网络号，然后自行分配主机号
+
+D类IP地址用于多播
+
+A类的`0.0.0.0`表示本网络, `127.0.0.1`用于本地换回测试
+
+路由器仅根据IP地址来转发分组
+
+**子网掩码**:  它用于指示IP地址的哪些位标识主机所在的子网，哪些位标识为主机的位掩码。用于判断两个IP地址是否属于同一个子网
+
+## ARP协议的作用、简要原理
+
+https://www.zhihu.com/question/21546408/answer/2303205686
+
+ARP协议是负责IP地址到MAC地址转换的协议，解决的是**同一个局域网**的主机或路由器IP地址和硬件地址的映射问题
+
+1. 先查询**ARP高速缓存**，如果有，那么写入MAC帧，然后通过局域网发往此硬件地址；如果没有，那么需要在本局域网上广播一个ARP请求分组
+2. 所有主机都收到该ARP请求分组
+3. 所有主机的IP地址与ARP请求分组中的IP一致的话，就以**单播**的形式返回结果
+
+**为什么需要IP地址?** 通过IP地址和硬件地址，减少需要维护的映射表大小。
+
+**为什么需要MAC地址?** MAC地址是以太网的物理标志，可以没有
+
+**默认网关**: 发送给不同子网的机器时吗，就发送给这个IP地址
+
+跨网络的ARP需要多发送一次
+
+## Cookie和Session的区别
+
+1. cookie保存在客户端浏览器中，如chrome会保存在自己的一个**SQLite**数据库中; session保存在服务端
+2. cookie存储容量很小，session存储容量很大
+3. cookie安全性较低，session安全性很高
+
+## CSRF攻击和XSS攻击原理及防护
