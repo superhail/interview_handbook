@@ -64,7 +64,10 @@ only rings 0(kernel) and 3(user) are typically used
 
 使用fork()调用创建子进程，fork()调用返回两个值，大于0的表示父进程，等于0的表示子进程。
 
-## 一个进程可以分配多少个线程(TODO)
+## 一个进程可以分配多少个线程
+
+1. 32位系统，用户态的虚拟空间只有3G，如果创建线程时分配的栈空间是10M，那么一个进程最多只能创建300个左右的进程
+2. 64位系统，用户态的虚拟空间最大有128T，理论上不会受到虚拟内存大小的限制，但实际上会受到系统参数(threads-max, pid_max, max_map_count)和物理性能的限制
 
 ## fork, vfork, clone, posix_spawn
 
@@ -284,6 +287,8 @@ syscall时会检查task_struct里的标志位`PT_TRACESYS`
 
 ### 皮特森算法
 
+如果没有turn的话，会死锁，需要turn来定序
+
 ```c++
 /* process 0 */
 while (true)
@@ -377,7 +382,104 @@ Locks are inheried by a new program across an exec.
 
 Locks at End of File (offset=-1)
 
-### futex(TODO)
+### 读写锁
+
+```c++
+// 偏向读者的读写锁，需要注意的是读写锁的核心不在于简化读者加锁放锁的流程，而在于增加读者的并行度
+struct rwlock {
+    int reader_cnt;
+    lock read_lock;
+    lock write_lock;
+	void lock_reader();
+    void unlock_reader();
+    void lock_writer();
+    void unlock_writer();
+}
+
+void rwlock::lock_read() {
+    read_lock.lock();
+    reader_cnt++;
+    if (reader_cnt == 1) {
+        write_lock.lock();
+    }
+    read_lock.unlock();
+}
+
+void rwlock::unlock_read() {
+    read_lock.lock();
+    reader_cnt--;
+    if (reader_cnt == 0) {
+        write_lock.unlock();
+    }
+    read_lock.unlock();
+}
+
+void rwlock::lock_write() {
+    write_lock.lock();
+}
+
+void rwlock::unlock_write() {
+    write_lock.unlock();
+}
+
+// 偏向写者的读写锁
+struct rwlock {
+    int reader_cnt;
+	bool has_writer;
+    condition_variable write_cond;
+    condition_variable read_cond;
+    lock lock;
+	void lock_reader();
+    void unlock_reader();
+    void lock_writer();
+    void unlock_writer();
+}
+
+void rwlock::lock_read() {
+    lock.lock();
+    while (has_writer) {
+        wait(&write_cond, &lock);
+    }
+    reader_cnt++;
+    lock.unlock();
+}
+
+void rwlock::unlock_read() {
+    lock.lock();
+    reader_cnt--;
+    if (reader_cnt == 0) {
+        signal(&read_cond);
+    }
+    lock.unlock();
+}
+
+void rwlock::lock_write() {
+    lock.lock();
+    while (has_writer) { // 先修改has_writer
+        wait(&write_cond, &lock);
+    }
+    has_writer = true;
+    while (reader_cnt > 0) { // 使用while是为了防止signal多个线程
+        wait(&read_cond, &lock);
+    }
+    lock.unlock();
+}
+
+void rwlock::unlock_write() {
+    lock.lock();
+    has_writer = false;
+	signal(&write_cond);
+    lock.unlock();
+}
+```
+
+### RCU
+
+RCU是一个链表，通过原子操作来实现读写之间的不阻塞，类似MVCC。
+
+grace period指在删除操作以后，过多久才可以回收内存
+
+### futex
 
 
 
@@ -415,7 +517,7 @@ Locks at End of File (offset=-1)
 - linear address: physical address or virtual address
 - physical address: 物理地址
 
-### 缺页中断(TODO)
+### 缺页中断
 
 [内核缺页原理简介 · 语雀 (yuque.com)](https://www.yuque.com/books/share/ef40e95e-e3bc-4ebd-9534-106920227368/eiyund)
 
@@ -430,9 +532,18 @@ swap in && swap out
 
 虚拟内存区域(Virtual Memory Area, VMA)用于区分是未分配，还是已分配但是还未映射至物理内存的状态
 
+缺页由缺页中断进行处理，当进程操作异常的虚拟地址时，触发缺页中断，开始处理这次缺页，CPU将引起缺页的`虚拟地址存入寄存器cr2`，然后保存上下文并调用`do_page_fault()进行C代码级别缺页处理流程`。
+
+1. 匿名缺页：由于匿名的mmap的初始值为0, 所以对这个的读取操作一开始是map到zero page，写操作则会申请内存
+2. 写零页缺页：匿名缺页里使用的
+3. 写匿名页异常：fork引发的异常
+   1. 一旦某一方率先进行写操作，就触发写异常缺页，发现有他人引用页，`则进行写时复制，分配新页，拷贝一份原页的内容的到新页中`，然后设置页表为可写，递减引用计数和映射计数或者递减交换计数。
+   2. `另一方面，后来的进程对其写时，也发生写异常缺页，但发现没有他人引用页，则进行修改页表项为可写`。
+4. 交换缺页：当内核在物理内存紧张的时候，内核内存回收机制将用户进程的特定的部分物理页通过。交换分区写入磁盘或文件（比如在alloc_pages()时触发交换机制），然后将`该页在交换分区的标记写入原页表`项代替页号，并将页表项的驻留内存属性清零。所有在交换分区之上构建了交换页高速缓存，在交换的换入换出中都先操作缓存，然后再周期的将没有被任何人引用的页写入磁盘
+
 ### MMU
 
-虚拟地址到物理地址
+虚拟地址到物理地址，同时会产生page fault
 
 内存管理单元MMU。他由一个或一组芯片组成，一般存在与协处理器中，其功能是把虚拟地址映射为物理地址
 
@@ -575,6 +686,8 @@ Vmalloc() is used to allocate memory from the kernel.The memory allocated is vir
 
 ### select/poll/epoll的区别和5种IO模型
 
+[Linux select源码分析 - 简书 (jianshu.com)](https://www.jianshu.com/p/95b50b026895)
+
 简单的non-blocking I/O: try了以后等待一段时间再去poll数据，
 
 async I/O: 通过信号来进行I/O，存在两个问题
@@ -622,10 +735,36 @@ static int do_poll(unsigned int nfds, unsigned int nchunks, unsigned int nleft,
 			do_pollfd(POLLFD_PER_PAGE, fds[i], &pt, &count); /* 检查设备状态，把回调函数加入到等待队列里 */
 		if (count || !timeout || signal_pending(current)) /* 如果有事件就break，或者已经进行过timeout也会返回 */
 			break;
-		timeout = schedule_timeout(timeout); /* 如果没有就进行一个timeout的等待，返回剩余的timeout */
+		timeout = schedule_timeout(timeout); /* 如果没有就尝试进行最大为timeout的等待，返回剩余的timeout */
 	}
 	current->state = TASK_RUNNING;
 	return count;
+}
+
+static void do_pollfd(unsigned int num, struct pollfd * fdpage,
+	poll_table ** pwait, int *count)
+{
+	for (i = 0; i < num; i++) {
+		fdp = fdpage+i;
+		fd = fdp->fd;
+		if (fd >= 0) {
+			struct file * file = fget(fd);
+			mask = POLLNVAL;
+			if (file != NULL) {
+				mask = DEFAULT_POLLMASK;
+                // 进行一次poll的操作,这里会调用pwait，其中将pollwake加入到等待队列之中，pollwake的作用是唤醒进程
+				if (file->f_op && file->f_op->poll)
+					mask = file->f_op->poll(file, *pwait);
+				mask &= fdp->events | POLLERR | POLLHUP;
+				fput(file);
+			}
+			if (mask) { // 如果mask返回有事件，那么我们需要设置pwait为空，防止重复加入队列
+				*pwait = NULL;
+				(*count)++;
+			}
+		}
+		fdp->revents = mask;
+	}
 }
 ```
 
@@ -633,19 +772,19 @@ select的问题:
 
 - 每次调用select，都需把fd集合从用户态拷贝到内核态，fd很多时开销就很大
 - 同时每次调用select都需在内核遍历传递进来的所有fd，fd很多时开销就很大
-- select支持的文件描述符数量太小了，默认最大支持1024个
+- select支持的文件描述符数量太小了，由于使用fd_set这样的bit set，默认最大支持1024个
 - 主动轮询效率很低
 
 select和poll的区别: 二者的区别仅在programmer interface上, **poll没有最大文件描述符数量的限制**
 
 select和epoll(event poll)的区别: 
 
-epoll模型修改主动轮询为被动通知，当有事件发生时，被动接收通知。所以epoll模型注册套接字后，主程序可做其他事情，当事件发生时，接收到通知后再去处理。
+epoll模型**修改主动轮询为被动通知，当有事件发生时，被动接收通知**。所以epoll模型注册套接字后，主程序可做其他事情，当事件发生时，接收到通知后再去处理。epoll与select的主要区别在于注册的回调函数，epoll的回调函数是把fd加入队列，select是唤醒进程。
 
 epoll的解决:
 
 - 对于第一个缺点，epoll的解决方案在epoll_ctl函数中。每次注册新的事件到epoll句柄中时（在epoll_ctl中指定EPOLL_CTL_ADD），会把所有的fd拷贝进内核，而不是在epoll_wait的时候重复拷贝。epoll保证了每个fd在整个过程中只会拷贝一次。
-- 对于第二个缺点，epoll的解决方案不像select或poll一样每次都把current轮流加入fd对应的设备等待队列中，而只在epoll_ctl时把current挂一遍（这一遍必不可少）并为每个fd指定一个回调函数，当设备就绪，唤醒等待队列上的等待者时，就会调用这个回调函数，而这个回调函数会把就绪的fd加入一个就绪链表）。epoll_wait的工作实际上就是在这个就绪链表中查看有没有就绪的fd（利用schedule_timeout()实现睡一会，判断一会的效果，和select实现中的第7步是类似的）。
+- 对于第二个缺点，epoll的解决方案不像select或poll一样每次都把current轮流加入fd对应的设备等待队列中，而只在epoll_ctl时把current挂一遍（这一遍必不可少）并为每个fd指定一个回调函数，当设备就绪，唤醒等待队列上的等待者时，就会调用这个回调函数，而这个回调函数会把就绪的fd加入一个就绪链表。epoll_wait的工作实际上就是在这个就绪链表中查看有没有就绪的fd（利用schedule_timeout()实现睡一会，判断一会的效果，和select实现中的第7步是类似的）。
 - 对于第三个缺点，epoll没有这个限制，它所支持的FD上限是最大可以打开文件的数目，这个数字一般远大于2048,举个例子,在1GB内存的机器上大约是10万左右，具体数目可以cat /proc/sys/fs/file-max察看,一般来说这个数目和系统内存关系很大。
 
 epoll的优点:
@@ -671,7 +810,7 @@ epoll的触发模式:
 
 [[译\] Linux 异步 I/O 框架 io_uring：基本原理、程序示例与性能压测（2020） (arthurchiao.art)](https://arthurchiao.art/blog/intro-to-io-uring-zh/#12-非阻塞式-ioselectpollepoll)
 
-包含了两个ring buffer，一个submit queue entry和一个completion queue entry。用户和kernel通过mmap进行交互
+包含了两个ring buffer，一个submit queue entry和一个completion queue entry。用户和kernel通过mmap进行交互，通过内存屏障确保正确性
 
 ```c++
 struct app_sq_ring app_setup_sq_ring(int ring_fd, struct io_uring_params *p)
@@ -699,6 +838,8 @@ struct app_sq_ring app_setup_sq_ring(int ring_fd, struct io_uring_params *p)
 #### 特性
 
 使用简单，Linked mode，File descriptors and buffers can be pre-registered to save mapping/unmapping time
+
+三种工作模式: 1. 中断驱动 2. 轮询模式(low latency模式) 3. 内核轮询
 
 #### System call API
 

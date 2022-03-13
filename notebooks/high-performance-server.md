@@ -5,3 +5,5 @@
 
 But, more importantly, **if a server fails and is removed from the circle, only the BLOBs that were mapped to the failed server need to be reassigned to the next server in clockwise order**. Likewise, if a new server is added, it is added to the unit circle, and only the BLOBs mapped to that server need to be reassigned.
 
+一致性哈希存在节点分布不均匀的问题，通过加入虚拟节点可以解决这个问题
+
