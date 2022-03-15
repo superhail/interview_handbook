@@ -481,6 +481,33 @@ grace period指在删除操作以后，过多久才可以回收内存
 
 ### futex
 
+`void futex_wait(int *uaddr, int val)`和`void futex_wake(int *uaddr)`
+
+使用futex实现互斥锁
+
+```c++
+struct lock {
+	int lock_val;
+    int waiters;
+};
+
+void lock(struct lock *lock)
+{
+    while (atomic_CAS(&lock->lock_val, 0, 1) != 0) {
+		atomic_FAA(&lock->waiters, 1);
+        futex_wait(&lock->lock_val, 1); // only wait if lock_val == 1, else just return
+        atomic_FAA(&lock->waiters, -1);
+    }
+}
+
+void unlock(struct lock *lock)
+{
+    lock->lock_val = 0;
+    if (lock->waiters != 0)
+        futex_wake(&lock->lock_val);
+}
+```
+
 
 
 ## 产生死锁的四个必要条件：
@@ -534,12 +561,17 @@ swap in && swap out
 
 缺页由缺页中断进行处理，当进程操作异常的虚拟地址时，触发缺页中断，开始处理这次缺页，CPU将引起缺页的`虚拟地址存入寄存器cr2`，然后保存上下文并调用`do_page_fault()进行C代码级别缺页处理流程`。
 
-1. 匿名缺页：由于匿名的mmap的初始值为0, 所以对这个的读取操作一开始是map到zero page，写操作则会申请内存
-2. 写零页缺页：匿名缺页里使用的
-3. 写匿名页异常：fork引发的异常
+可以分为**软性**(已经加载但是还没有注册到MMU), **硬性**(还未被加载到内存), **无效**(访问的地址不存在)
+
+1. 匿名映射缺页异常：由于匿名的mmap的初始值为0, 所以对这个的读取操作一开始是map到zero page，写操作则会申请内存。先读后写则引发COW写时复制缺页。
+2. 文件映射缺页
+3. 写时缺页：匿名缺页里使用的，分配一个新的页，然后填满0，返回
+3. COW写时复制缺页异常：fork引发的异常
    1. 一旦某一方率先进行写操作，就触发写异常缺页，发现有他人引用页，`则进行写时复制，分配新页，拷贝一份原页的内容的到新页中`，然后设置页表为可写，递减引用计数和映射计数或者递减交换计数。
    2. `另一方面，后来的进程对其写时，也发生写异常缺页，但发现没有他人引用页，则进行修改页表项为可写`。
 4. 交换缺页：当内核在物理内存紧张的时候，内核内存回收机制将用户进程的特定的部分物理页通过。交换分区写入磁盘或文件（比如在alloc_pages()时触发交换机制），然后将`该页在交换分区的标记写入原页表`项代替页号，并将页表项的驻留内存属性清零。所有在交换分区之上构建了交换页高速缓存，在交换的换入换出中都先操作缓存，然后再周期的将没有被任何人引用的页写入磁盘
+4. 内核非连续内存映射缺页, vmalloc是把这块内存映射到了内核的虚拟地址空间(init_mm),并没有映射到当前进程的内核态页表
+7. 指令预提取缺页
 
 ### MMU
 
@@ -849,9 +881,11 @@ struct app_sq_ring app_setup_sq_ring(int ring_fd, struct io_uring_params *p)
 
 ## 打开文件与解析文件的路径(TODO)
 
-
+打开文件的过程, 第一步是
 
 ## 操作系统调度
+
+**内核中不会发生调度**
 
 短期调度，中期调度，长期调度
 
