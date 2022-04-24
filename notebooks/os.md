@@ -809,7 +809,17 @@ select的问题:
 
 select和poll的区别: 二者的区别仅在programmer interface上, **poll没有最大文件描述符数量的限制**
 
-select和epoll(event poll)的区别: 
+### epoll的事件存储在了哪里？
+
+epoll的事件存储在了eventpoll对象中与一个epoll的fd对应
+
+wq: 等待队列，当调用 epoll_wait(fd) 时会把进程添加到 eventpoll 对象的 wq 等待队列中。
+rdllist: 保存已经就绪的文件列表。epoll注册的回调函数会把就绪的文件注册到就绪队列中。
+rbr: 使用红黑树来管理所有被监听的epitem。(由于epoll无需每次都重复拷贝fd，fd是通过红黑树来实现管理的)。
+
+<img src="../images/os/bVcU0XA.png" alt="image.png" style="zoom:50%;" />
+
+### select和epoll(event poll)的区别:
 
 epoll模型**修改主动轮询为被动通知，当有事件发生时，被动接收通知**。所以epoll模型注册套接字后，主程序可做其他事情，当事件发生时，接收到通知后再去处理。epoll与select的主要区别在于注册的回调函数，epoll的回调函数是把fd加入队列，select是唤醒进程。
 

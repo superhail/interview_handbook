@@ -12,3 +12,8 @@
 关于clwb效率比clflush/clflushopt高的问题：
  1. clwb在cascade平台上，不会保留cacheline在cache中，所以跟clflushopt是一样的。我记得是在icelake后，clwb才会在flush后，保留数据在cacheline上
  2. clwb/clflushopt效率比clflush高的主要原因是他们可以pipline执行，不像clflush，必须要等前一个flush结束，才能执行下一个
+
+
+
+
+
