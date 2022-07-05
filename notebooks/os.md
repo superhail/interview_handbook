@@ -845,7 +845,7 @@ epoll的事件存储在了eventpoll对象中与一个epoll的fd对应
 
 wq: 等待队列，当调用 epoll_wait(fd) 时会把进程添加到 eventpoll 对象的 wq 等待队列中。
 rdllist: 保存已经就绪的文件列表。epoll注册的回调函数会把就绪的文件注册到就绪队列中。
-rbr: 使用红黑树来管理所有被监听的epitem。(由于epoll无需每次都重复拷贝fd，fd是通过红黑树来实现管理的)。
+rbr: 使用**红黑树**来管理所有被监听的epitem。(由于epoll无需每次都重复拷贝fd，fd是通过**红黑树**来实现管理的)。
 
 <img src="../images/os/bVcU0XA.png" alt="image.png" style="zoom:50%;" />
 
