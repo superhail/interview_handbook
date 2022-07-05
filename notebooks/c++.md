@@ -40,3 +40,12 @@ typeinfo本质上也是一个类，存储着基类的信息。
 3. 构造函数不能是虚的。**虚函数的运行依赖于虚函数指针，而虚函数指针在构造函数中进程初始化，让它指向正确的虚函数表，而在对象构造期间，虚函数指针还未构造完成。**
 4. **纯虚析构函数必须有定义体**
 
+## char to unsigned int
+
+char a = 255;
+
+unsigned int b = a; // b == std::numeric_limits<unsigned int>::max();
+
+255 => 2^8 - 1 => 2^32 - 1
+
+`char` is signed by default.

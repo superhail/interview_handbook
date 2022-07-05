@@ -28,6 +28,8 @@ syscall和int 0x80
 
 其实CALL指令和JMP指令也可以切换
 
+系统调用，中断，异常
+
 ### What is asmlinkage?
 
 The asmlinkage tag is one other thing that we should observe about this simple function. This is a #define for some gcc magic **that tells the compiler that the function should not expect to find any of its arguments in registers** (a common optimization), but only on the CPU's stack. Recall our earlier assertion that system_call consumes its first argument, the system call number, and allows up to four more arguments that are passed along to the real system call. system_call achieves this feat simply by leaving its other arguments (which were passed to it in registers) on the stack. All system calls are marked with the asmlinkage tag, so they all look to the stack for arguments. Of course, in sys_ni_syscall's case, this doesn't make any difference, because sys_ni_syscall doesn't take any arguments, but it's an issue for most other system calls. And, because you'll be seeing asmlinkage in front of many other functions, I thought you should know what it was about.
@@ -40,6 +42,14 @@ only rings 0(kernel) and 3(user) are typically used
 
 <img src="../../images/面经题目/6a0120a85dcdae970b0120a86db3ea970b-pi.png" alt="CPU Ring Model" style="zoom: 50%;" />
 
+### 内核态如何访问用户态内存
+
+`copy_from_user`, `copy_to_user`，处理访问的range是否合法以及非法的内存访问。
+
+### 内核空间和用户空间
+
+内核空间为上面1G，用户空间为下面3G
+
 ## 进程和线程的区别和联系
 
 进程是资源分配的最小单位，线程是CPU调度的最小单位
@@ -50,7 +60,7 @@ only rings 0(kernel) and 3(user) are typically used
 
 ## 进程的状态、线程的状态
 
-参考陈海波的书，建议画图
+参考陈海波的书，建议画
 
 新生(还未完成初始化), 预备(还没被调度), 阻塞(等待外部事件), 运行(运行中断了就回到预备), 终止
 
@@ -68,6 +78,14 @@ only rings 0(kernel) and 3(user) are typically used
 
 1. 32位系统，用户态的虚拟空间只有3G，如果创建线程时分配的栈空间是10M，那么一个进程最多只能创建300个左右的进程
 2. 64位系统，用户态的虚拟空间最大有128T，理论上不会受到虚拟内存大小的限制，但实际上会受到系统参数(threads-max, pid_max, max_map_count)和物理性能的限制
+
+## 一个进程的虚拟内存空间包括哪些部分?BSS和data的区别
+
+内存虚拟空间
+
+栈，共享库文件，堆，bss，data，text
+
+**BSS refers to uninitialized global and static objects and Data refers to initialized global and static objects**. 
 
 ## fork, vfork, clone, posix_spawn
 
@@ -106,9 +124,21 @@ exec的步骤:
 
 ## 守护进程、僵尸进程和孤儿进程是什么
 
-1. 一个父进程退出，而它的一个或多个子进程还在运行，那么那些子进程将成为孤儿进程。孤儿进程将被init进程(进程号为1)所收养，并由init进程对它们完成状态收集工作。
+1. 一个父进程退出，而它的一个或多个子进程还在运行，那么那些子进程将成为孤儿进程。孤儿进程将被init进程(进程号为1)所收养，并由init进程对它们完成状态收集工作。\s
 2. 一个进程使用fork创建子进程，如果子进程退出，而父进程并没有调用wait或waitpid获取子进程的**状态信息**，那么子进程的进程描述符仍然保存在系统中。这种进程称之为僵死进程。**这时用ps命令就能看到子进程的状态是“Z”**
 3. Linux Daemon（守护进程）是运行在后台的一种特殊进程。它独立于控制终端并且周期性地执行某种任务或等待处理某些发生的事件。它不需要用户输入就能运行而且提供某种服务，不是对整个系统就是对某个用户程序提供服务。Linux系统的大多数服务器就是通过守护进程实现的。常见的守护进程包括系统日志进程syslogd、 web服务器httpd、邮件服务器sendmail和数据库服务器mysqld等。
+
+## 进程上下文切换包括了哪些内容
+
+用户级上下文：指令，数据，共享[内存](https://so.csdn.net/so/search?q=内存&spm=1001.2101.3001.7020)、用户栈
+寄存器上下文：[程序计数器](https://so.csdn.net/so/search?q=程序计数器&spm=1001.2101.3001.7020)，通用寄存器，控制寄存器，状态字寄存器，栈指针（用来指向用户栈或者内存栈）
+系统级上下文：pcb，主存管理信息（页表&段表）、核心栈
+
+## 中断上下文切换包括哪些内容
+
+EFLAGS, CS, EIP，可能包括三个堆栈寄存器
+
+<img src="../images/os/image-20220701193044783.png" alt="image-20220701193044783" style="zoom:67%;" />
 
 ## 为什么说进程上下文的代价比线程大
 
