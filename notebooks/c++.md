@@ -49,3 +49,14 @@ unsigned int b = a; // b == std::numeric_limits<unsigned int>::max();
 255 => 2^8 - 1 => 2^32 - 1
 
 `char` is signed by default.
+
+## <<和>>运算符的重载
+
+```c++
+friend istream &operator>>( istream  &input, Distance &D )
+{ 
+    input >> D.feet >> D.inches;
+    return input;            
+}
+```
+

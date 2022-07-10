@@ -40,7 +40,7 @@ It is also used to allow calling a function from assembly files.
 
 only rings 0(kernel) and 3(user) are typically used
 
-<img src="../../images/面经题目/6a0120a85dcdae970b0120a86db3ea970b-pi.png" alt="CPU Ring Model" style="zoom: 50%;" />
+<img src="../images/os/6a0120a85dcdae970b0120a86db3ea970b-pi.png" alt="CPU Ring Model" style="zoom: 50%;" />
 
 ### 内核态如何访问用户态内存
 
@@ -81,7 +81,7 @@ only rings 0(kernel) and 3(user) are typically used
 
 ## 一个进程的虚拟内存空间包括哪些部分?BSS和data的区别
 
-内存虚拟空间
+内核虚拟空间
 
 栈，共享库文件，堆，bss，data，text
 
@@ -124,8 +124,10 @@ exec的步骤:
 
 ## 守护进程、僵尸进程和孤儿进程是什么
 
-1. 一个父进程退出，而它的一个或多个子进程还在运行，那么那些子进程将成为孤儿进程。孤儿进程将被init进程(进程号为1)所收养，并由init进程对它们完成状态收集工作。\s
-2. 一个进程使用fork创建子进程，如果子进程退出，而父进程并没有调用wait或waitpid获取子进程的**状态信息**，那么子进程的进程描述符仍然保存在系统中。这种进程称之为僵死进程。**这时用ps命令就能看到子进程的状态是“Z”**
+[Zombie and Orphan Process in OS | Scaler Topics](https://www.scaler.com/topics/operating-system/zombie-and-orphan-process-in-os/)
+
+1. 一个父进程退出，而它的一个或多个**子进程还在运行**，那么那些子进程将成为孤儿进程。孤儿进程将被init进程(进程号为1)所收养，并由init进程对它们完成状态收集工作。父进程死亡前后，子进程的process ID会发生变化。
+2. 一个进程使用fork创建子进程，如果**子进程退出**，而父进程并没有调用wait或waitpid获取子进程的**状态信息**，那么子进程的进程描述符仍然保存在系统中。这种进程称之为僵死进程。**这时用ps命令就能看到子进程的状态是“Z”**
 3. Linux Daemon（守护进程）是运行在后台的一种特殊进程。它独立于控制终端并且周期性地执行某种任务或等待处理某些发生的事件。它不需要用户输入就能运行而且提供某种服务，不是对整个系统就是对某个用户程序提供服务。Linux系统的大多数服务器就是通过守护进程实现的。常见的守护进程包括系统日志进程syslogd、 web服务器httpd、邮件服务器sendmail和数据库服务器mysqld等。
 
 ## 进程上下文切换包括了哪些内容
@@ -198,7 +200,11 @@ SIGKILL, SIGINT，ctrl+c多了一个硬件中断
 
 ### syscall的过程
 
-INT 0x80，压入eax作为跳转表index，然后是其他参数，syscall的参数不超过5个
+INT 0x80，压入eax作为跳转表index，然后是其他参数，syscall的参数不超过5个(Linux通过寄存器而不是堆栈传递参数)
+
+当CPU穿过陷阱门时，从用户空间进入系统空间时，由于运行级别的变动，要从**用户堆栈转换到系统堆栈**。
+
+但是不会**更换vmap**
 
 ## BIO, NIO, AIO之间的区别
 
@@ -283,7 +289,7 @@ type field的作用是作为priority或者标记client
 
 ### 管道、消息队列本质是什么
 
-管道的本质是一个伪文件(一个在内存里的inode，内部有一个循环缓冲区)，读写的位置和锁都会被保存在数据结构里，会有reference counting。
+管道的本质是一个**伪文件**(一个在内存里的inode，内部有一个循环缓冲区)，读写的位置和锁都会被保存在数据结构里，会有reference counting。
 
 消息队列的本质则是一个a linked list of messages数据结构，没有reference counting，只有一个全局的`ipc_ids`来对所有message queue进行管理
 
@@ -513,7 +519,7 @@ grace period指在删除操作以后，过多久才可以回收内存
 
 `void futex_wait(int *uaddr, int val)`和`void futex_wake(int *uaddr)`
 
-使用futex实现互斥锁
+使用futex实现互斥锁，竞争程度低的时候用原子操作完成加锁，竞争程度高时，挂起等待被后续锁持有者唤醒。
 
 ```c++
 struct lock {
@@ -537,8 +543,6 @@ void unlock(struct lock *lock)
         futex_wake(&lock->lock_val);
 }
 ```
-
-
 
 ## 产生死锁的四个必要条件：
 
@@ -863,8 +867,6 @@ epoll的优点:
 
 - 没有最大并发连接的限制，能打开的FD的上限远大于1024（1G的内存上能监听约10万个端口）
 - 效率提升，不是轮询，不会随着FD数目的增加效率下降。只有活跃可用的FD才会调用callback函数 即Epoll最大的优点就在于它只关心“活跃”的连接，而跟连接总数无关，因此在实际的网络环境中，Epoll的效率就会远远高于select和poll
-- 内存拷贝，利用mmap()文件映射内存加速与内核空间的消息传递；即epoll使用mmap减少复制开销。
-- epoll通过内核和用户空间共享一块内存来实现的
 
 epoll的触发模式:
 
