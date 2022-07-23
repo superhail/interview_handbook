@@ -20,7 +20,8 @@ https://blog.codinghorror.com/understanding-user-and-kernel-mode/
 
 ### 如何确定current ring
 
-GDT Table和segment register
+- global descriptor table: a in-memory table of GDT entries, and each entry has a field `Privl` which encodes the ring.
+- the segment registers CS, DS, etc., which point to the index of an entry in the GDT.
 
 ### 如何切换
 
@@ -57,6 +58,20 @@ only rings 0(kernel) and 3(user) are typically used
 为了解决进程间数据不易共享，通信开销高等问题，操作系统在内部又引入了更轻量级的执行单元，也就是线程
 
 每个线程会共享instruction, global, and heap regions，但是会有自己的registers和stack，**thread的通信几乎不需要syscall**.
+
+## coroutine和fiber之间的区别
+
+fiber用户态线程
+
+1. when a coroutine yields, it passes control directly to its caller
+2. when a fiber blocks, it implicitly passes control to the fiber scheduler. Coroutine have no schedulers because they need no scheduler.
+
+## 有栈协程与无栈协程
+
+async/await异步模型是否优于stackful coroutine模型？ - 朱元的回答 - 知乎 https://www.zhihu.com/question/65647171/answer/233495694
+
+1. 无栈协程: async/wait, FDB实现的无栈协程; efficiency
+2. stackful coroutine: boost asio; more powerful
 
 ## 进程的状态、线程的状态
 
@@ -314,10 +329,6 @@ type field的作用是作为priority或者标记client
 共享内存，因为共享内存无需在client和server之间copy数据。但需要semaphore, record locking, or mutexes。无需在用户态和内核态之间进行切换。
 
 mmap需要有一个file作为backend, (可以用/dev/zero或者anonymouse memory mapping绕过这个限制，但是必须是关联的进程)
-
-### ptrace(TODO)
-
-syscall时会检查task_struct里的标志位`PT_TRACESYS`
 
 ## 同步原语
 
@@ -615,9 +626,32 @@ swap in && swap out
 
 与CPU之间靠地址总线相连
 
+### TLB在哪里
+
+TLB在MMU中
+
 ### 页面置换算法
 
 MIN/OPT策略，FIFO策略，Second Chance策略，LRU策略，MRU策略，时钟算法(类似Second Chance，但更加高效)
+
+## mmap的优缺点
+
+pros
+
+1. greate if you have multiple processes access data in a read only fashion
+2. used for IPC
+3. First, mmap circumvents the cost of explicit read/write system calls because the OS handles file mappings and page faults behind the scenes. 
+4. Second, mmap can return pointers to pages stored in the OS page cache, thereby avoiding an extra copy into a buffer allocated in user space.
+
+cons
+
+1. 无法映射变长文件
+2. bad for large file, because it has to find continuous addresses
+3. cant control buffer pool
+4. transactional safety, cant control when to flush to disk
+5. I/O stalls, mmap does not support asynchronous reads
+6. Error handling, because DBMS cant control data to disk, so every read has to be checked.
+7. Performance issues: (1) page table contention, (2) single-threaded page eviction(kswapd), and (3) TLB shootdowns(Flushing the local TLB of the initiating core is straightforward, but the OS must ensure that no stale entries remain in the TLBs of remote cores.)
 
 ## cache和buffer的区别
 
@@ -694,9 +728,91 @@ Vmalloc() is used to allocate memory from the kernel.The memory allocated is vir
 
 <img src="../images/os/v2-c381d93642b716770c6705dac13a30c8_hd.jpg" alt="img" style="zoom:67%;" />
 
-## ptmalloc, tcmalloc, jemalloc的区别(TODO)
+## ptmalloc, tcmalloc, jemalloc的区别
 
+总的来看，作为基础库的ptmalloc是最为稳定的内存管理器，无论在什么环境下都能适应，但是分配效率相对较低。 而tcmalloc针对多核情况有所优化，性能有所提高，但是内存占用稍高，大内存分配容易出现CPU飙升。 jemalloc的内存占用更高，但是在多核多线程下的表现也最为优异。
 
+[ptmalloc,tcmalloc和jemalloc内存分配策略研究 - 腾讯云开发者社区-腾讯云 (tencent.com)](https://cloud.tencent.com/developer/article/1173720)
+
+1. ptmalloc: 小内存用bin，大内存用mmap; **获取分配区的arena并加锁**
+
+   1. fast bin: There are 10 fast bins. Each of these bins maintains a single linked list. Addition and deletion happen from the front of this list (LIFO manner). **No two contiguous free fast chunks coalesce together.**
+
+   2. small bin: 比fastbin慢，但是比large bin快
+
+   3. unsorted bin: Small and large chunks, when freed, end up in this bin. The primary purpose of this bin is to act as a cache layer (kind of) to speed up allocation and deallocation requests.
+
+   4. large bins: Each bin maintains a doubly-linked list. A particular large bin has chunks of different sizes, sorted in decreasing order (i.e. largest chunk at the 'HEAD' and smallest chunk at the 'TAIL'). Insertions and removals happen at any position within the list.
+
+      <img src="../images/os/image-20220723211117162.png" alt="image-20220723211117162" style="zoom:67%;" />
+
+2. tcmalloc(thread cache malloc)
+
+   Ptmalloc在性能上还是存在一些问题的，比如不同分配区（arena）的内存不能交替使用，比如每个内存块分配都要浪费8字节内存等等，所以一般倾向于使用第三方的malloc。
+
+   [TCMalloc : Thread-Caching Malloc | tcmalloc (google.github.io)](https://google.github.io/tcmalloc/design.html)
+
+   ![Diagram of TCMalloc internal structure](../images/os/tcmalloc_internals.png)
+   1. front end
+
+      The front-end handles a request for memory of **a particular size**. 
+
+      There are two implementations of the TCMalloc front-end:
+
+      - Originally it supported **per-thread** caches of objects (hence the name Thread Caching Malloc). However, this resulted in memory footprints that scaled with the number of threads.
+      - More recently TCMalloc has supported **per-CPU mode**. In this mode each logical CPU in the system has its own cache from which to allocate memory. Note: On x86 a logical CPU is equivalent to a hyperthread.
+
+      If the middle-end is exhausted, or if the requested size is greater than the maximum size that the front-end caches handle, a request will **go to the back-end to either satisfy the large allocation**, or to refill the caches in the middle-end. The back-end is also referred to as the PageHeap.
+
+      ##### Per CPU Mode
+
+      利用到了一个名为restartable sequences(The first rule is that the critical section cannot make any changes to the protected data structure that are visible to other threads until **the final instruction in that section**. )的技术来避免额外的锁。
+
+      ![Memory layout of per-cpu data structures](https://google.github.io/tcmalloc/images/per-cpu-cache-internals.png)
+
+      下面为restartable sequences的图
+
+      ![restartable sequences diagram](../images/os/restartable-sequences-diagram.png)
+
+   2. middle end
+
+      1. transfer cache
+
+         When the front-end requests memory, or returns memory, it will reach out to the transfer cache.
+
+         The transfer cache gets its name from situations where one CPU (or thread) is allocating memory that is deallocated by **another CPU** (or thread). The transfer cache allows memory to rapidly flow between two different CPUs (or threads).
+
+         If the transfer cache is unable to satisfy the memory request, or has insufficient space to hold the returned objects, **it will access the central free list**.
+
+      2. central free list
+
+         The central free list manages memory in “[spans](https://google.github.io/tcmalloc/design.html#spans)”, a span is a collection of one or more “[TCMalloc pages](https://google.github.io/tcmalloc/design.html#tcmalloc-page-sizes)” of memory. These terms will be explained in the next couple of sections.
+
+      3. Pagemap and Spans
+
+         ![The pagemap maps objects to spans.](../images/os/pagemap.png)
+
+      4. Storing Small Objects in Spans
+
+         A span contains a pointer to the base of the TCMalloc pages that the span controls. For small objects those pages are divided into at most 2^16 objects. This value is selected so that within the span we can refer to objects by a **two-byte index**.
+
+   3. TCMalloc Backend
+
+      1. It manages large chunks of unused memory.
+      2. It is responsible for fetching memory from the OS when there is no suitably sized memory available to fulfill an allocation request.
+      3. It is responsible for returning unneeded memory back to the OS.
+
+      There are two backends for TCMalloc:
+
+      1. It manages large chunks of unused memory.
+      2. It is responsible for fetching memory from the OS when there is no suitably sized memory available to fulfill an allocation request.
+      3. It is responsible for returning unneeded memory back to the OS.
+
+3. jemalloc
+
+   Jemalloc也使用了**分配区（arena）**来维护内存。线程按第一次分配small或者large内存请求的顺序Round-Robin地选择一个分配区。每个分配区都维护了一系列分页，来提供small和large的内存分配请求。并且从一个分配区分配出去的内存块，在释放的时候一定会回到该分配区。也有**tccache**的概念。
+
+tcmalloc scores over all other in terms of CPU cycles per allocation **if the number of threads are less**. jemalloc is very close to tcmalloc but better than ptmalloc (std glibc implementation). In terms of memory overhead jemalloc is the best, seconded by ptmalloc, followed by tcmalloc.
 
 ## 零拷贝是什么
 
@@ -913,7 +1029,7 @@ struct app_sq_ring app_setup_sq_ring(int ring_fd, struct io_uring_params *p)
 
 使用简单，Linked mode，File descriptors and buffers can be pre-registered to save mapping/unmapping time
 
-三种工作模式: 1. 中断驱动 2. 轮询模式(low latency模式) 3. 内核轮询
+三种工作模式: 1. 中断驱动 2. 轮询模式(low latency模式) 3. 内核轮询(避免CPU上浪费时间)
 
 #### System call API
 
@@ -921,9 +1037,25 @@ struct app_sq_ring app_setup_sq_ring(int ring_fd, struct io_uring_params *p)
 
 [io_uring.pdf (kernel.dk)](https://kernel.dk/io_uring.pdf)
 
-## 打开文件与解析文件的路径(TODO)
+## 打开文件与解析文件的路径
 
-打开文件的过程, 第一步是
+<img src="../images/os/image-20220720144402093.png" alt="image-20220720144402093" style="zoom:67%;" />
+
+inode：指向文件块的指针，包含了访问时间，i_link（有多少个指向当前i_node的连接），i_dentry（有多少个与这个文件相联系的所有dentry结构）。
+
+dentry：存储了文件名到inode的映射
+
+超级块：根目录的位置以及文件系统的其他一些参数就记录在超级块中，超级块的位置总是固定的。
+
+1. 不以"/"开头的情况，task_struct->fs有个指针pwd指向当前工作目录的dentry结构。
+2. 以"/"开头的情况，从根目录开始遍历
+3. 处理一些特殊的字符如”..“或者"."
+
+## 文件的读写
+
+inode中有缓冲区队列。
+
+![image-20220720151525516](../images/os/image-20220720151525516.png)
 
 ## 操作系统调度
 
